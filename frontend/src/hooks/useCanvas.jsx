@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState } from 'react';
 
-const useCanvas = (socket, selectedColor, brushSize) => {
+const useCanvas = (socket, selectedColor, brushSize, roomId) => {
   const canvasRef = useRef(null);
   const contextRef = useRef(null);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -21,6 +21,8 @@ const useCanvas = (socket, selectedColor, brushSize) => {
     context.lineCap = 'round';
     context.lineWidth = brushSize;
     contextRef.current = context;
+
+    socket.emit('join-room', roomId);
 
     socket.on('drawing', ({ offsetX, offsetY, type, color, size, page }) => {
       if (page !== currentPage) return;
@@ -52,7 +54,7 @@ const useCanvas = (socket, selectedColor, brushSize) => {
     return () => {
       socket.off('drawing');
     };
-  }, [socket, brushSize, currentPage]);
+  }, [socket, brushSize, currentPage, roomId]);
 
   useEffect(() => {
     if (contextRef.current) {
@@ -90,7 +92,7 @@ const useCanvas = (socket, selectedColor, brushSize) => {
     contextRef.current.beginPath();
     contextRef.current.moveTo(offsetX, offsetY);
     setIsDrawing(true);
-    socket.emit('drawing', { offsetX, offsetY, type: 'start', color: selectedColor, size: brushSize, page: currentPage });
+    socket.emit('drawing', { roomId, offsetX, offsetY, type: 'start', color: selectedColor, size: brushSize, page: currentPage });
 
     // Save the drawing command
     setPages((prevPages) => {
@@ -107,7 +109,7 @@ const useCanvas = (socket, selectedColor, brushSize) => {
     const { offsetX, offsetY } = nativeEvent;
     contextRef.current.lineTo(offsetX, offsetY);
     contextRef.current.stroke();
-    socket.emit('drawing', { offsetX, offsetY, type: 'draw', color: selectedColor, size: brushSize, page: currentPage });
+    socket.emit('drawing', { roomId, offsetX, offsetY, type: 'draw', color: selectedColor, size: brushSize, page: currentPage });
 
     // Save the drawing command
     setPages((prevPages) => {
@@ -120,7 +122,7 @@ const useCanvas = (socket, selectedColor, brushSize) => {
   const endDrawing = () => {
     contextRef.current.closePath();
     setIsDrawing(false);
-    socket.emit('drawing', { type: 'end', color: selectedColor, size: brushSize, page: currentPage });
+    socket.emit('drawing', { roomId, type: 'end', color: selectedColor, size: brushSize, page: currentPage });
 
     // Save the drawing command
     setPages((prevPages) => {

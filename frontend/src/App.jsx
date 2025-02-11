@@ -1,7 +1,7 @@
 import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
 import HomePage from './pages/HomePage';
 import Whiteboard from './pages/WhiteBoard';
-
+import "./App.css"
 const App = () => {
   return (
     <Router>

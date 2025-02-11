@@ -6,56 +6,79 @@ const useCanvas = (socket, selectedColor, brushSize, roomId) => {
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentPage, setCurrentPage] = useState(0);
   const [pages, setPages] = useState([[]]);
+  const [isHost, setIsHost] = useState(false);
+  const [drawingEnabled, setDrawingEnabled] = useState(true);
 
+  // Initialize canvas and context
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    canvas.width = window.innerWidth * 2;
-    canvas.height = window.innerHeight * 2;
-    canvas.style.width = `${window.innerWidth}px`;
-    canvas.style.height = `${window.innerHeight}px`;
+    // Get the container dimensions
+    const container = canvas.parentElement;
+    const { width, height } = container.getBoundingClientRect();
+
+    // Set canvas dimensions with device pixel ratio
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    
+    // Set display size
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
 
     const context = canvas.getContext('2d');
-    context.scale(2, 2);
+    context.scale(dpr, dpr);
     context.lineCap = 'round';
+    context.strokeStyle = selectedColor;
     context.lineWidth = brushSize;
     contextRef.current = context;
 
+    // Join room
     socket.emit('join-room', roomId);
 
+    socket.on('room-state', ({ pages, drawingEnabled }) => {
+      setPages(pages);
+      setDrawingEnabled(drawingEnabled);
+      // Redraw the current page
+      redrawPage(pages[currentPage]);
+    });
+
+    socket.on('set-host', () => {
+      setIsHost(true);
+    });
+
+    // Listen for drawing events from other users
     socket.on('drawing', ({ offsetX, offsetY, type, color, size, page }) => {
-      if (page !== currentPage) return;
+      if (page !== currentPage || !contextRef.current) return;
 
-      const previousStrokeStyle = contextRef.current.strokeStyle;
-      const previousLineWidth = contextRef.current.lineWidth;
-      contextRef.current.strokeStyle = color;
-      contextRef.current.lineWidth = size;
-      if (type === 'start') {
-        contextRef.current.beginPath();
-        contextRef.current.moveTo(offsetX, offsetY);
-      } else if (type === 'draw') {
-        contextRef.current.lineTo(offsetX, offsetY);
-        contextRef.current.stroke();
-      } else if (type === 'end') {
-        contextRef.current.closePath();
+      const ctx = contextRef.current;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = size;
+
+      switch (type) {
+        case 'start':
+          ctx.beginPath();
+          ctx.moveTo(offsetX, offsetY);
+          break;
+        case 'draw':
+          ctx.lineTo(offsetX, offsetY);
+          ctx.stroke();
+          break;
+        case 'end':
+          ctx.closePath();
+          break;
       }
-      contextRef.current.strokeStyle = previousStrokeStyle;
-      contextRef.current.lineWidth = previousLineWidth;
-
-      // Save the drawing command
-      setPages((prevPages) => {
-        const newPages = [...prevPages];
-        newPages[page] = [...newPages[page], { offsetX, offsetY, type, color, size }];
-        return newPages;
-      });
     });
 
     return () => {
+      socket.off('room-state');
+      socket.off('set-host');
       socket.off('drawing');
     };
-  }, [socket, brushSize, currentPage, roomId]);
+  }, [socket, roomId, currentPage]);
 
+  // Update context when color or brush size changes
   useEffect(() => {
     if (contextRef.current) {
       contextRef.current.strokeStyle = selectedColor;
@@ -63,90 +86,134 @@ const useCanvas = (socket, selectedColor, brushSize, roomId) => {
     }
   }, [selectedColor, brushSize]);
 
-  useEffect(() => {
-    // Clear the canvas
-    contextRef.current.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-
-    // Replay the drawing commands for the current page
-    pages[currentPage].forEach(({ offsetX, offsetY, type, color, size }) => {
-      const previousStrokeStyle = contextRef.current.strokeStyle;
-      const previousLineWidth = contextRef.current.lineWidth;
-      contextRef.current.strokeStyle = color;
-      contextRef.current.lineWidth = size;
-      if (type === 'start') {
-        contextRef.current.beginPath();
-        contextRef.current.moveTo(offsetX, offsetY);
-      } else if (type === 'draw') {
-        contextRef.current.lineTo(offsetX, offsetY);
-        contextRef.current.stroke();
-      } else if (type === 'end') {
-        contextRef.current.closePath();
-      }
-      contextRef.current.strokeStyle = previousStrokeStyle;
-      contextRef.current.lineWidth = previousLineWidth;
-    });
-  }, [currentPage, pages]);
-
   const startDrawing = ({ nativeEvent }) => {
-    const { offsetX, offsetY } = nativeEvent;
+    if (!isHost && !drawingEnabled) return;
+    if (!contextRef.current) return;
+
+    const { offsetX, offsetY } = getCoordinates(nativeEvent);
+    
     contextRef.current.beginPath();
     contextRef.current.moveTo(offsetX, offsetY);
     setIsDrawing(true);
-    socket.emit('drawing', { roomId, offsetX, offsetY, type: 'start', color: selectedColor, size: brushSize, page: currentPage });
 
-    // Save the drawing command
-    setPages((prevPages) => {
-      const newPages = [...prevPages];
-      newPages[currentPage] = [...newPages[currentPage], { offsetX, offsetY, type: 'start', color: selectedColor, size: brushSize }];
-      return newPages;
+    // Emit drawing start
+    socket.emit('drawing', {
+      roomId,
+      offsetX,
+      offsetY,
+      type: 'start',
+      color: selectedColor,
+      size: brushSize,
+      page: currentPage
     });
   };
 
   const draw = ({ nativeEvent }) => {
-    if (!isDrawing) {
-      return;
-    }
-    const { offsetX, offsetY } = nativeEvent;
+    if (!isDrawing || !contextRef.current) return;
+    if (!isHost && !drawingEnabled) return;
+
+    const { offsetX, offsetY } = getCoordinates(nativeEvent);
+    
     contextRef.current.lineTo(offsetX, offsetY);
     contextRef.current.stroke();
-    socket.emit('drawing', { roomId, offsetX, offsetY, type: 'draw', color: selectedColor, size: brushSize, page: currentPage });
 
-    // Save the drawing command
-    setPages((prevPages) => {
-      const newPages = [...prevPages];
-      newPages[currentPage] = [...newPages[currentPage], { offsetX, offsetY, type: 'draw', color: selectedColor, size: brushSize }];
-      return newPages;
+    // Emit drawing movement
+    socket.emit('drawing', {
+      roomId,
+      offsetX,
+      offsetY,
+      type: 'draw',
+      color: selectedColor,
+      size: brushSize,
+      page: currentPage
     });
   };
 
   const endDrawing = () => {
+    if (!contextRef.current) return;
+    if (!isHost && !drawingEnabled) return;
+    
     contextRef.current.closePath();
     setIsDrawing(false);
-    socket.emit('drawing', { roomId, type: 'end', color: selectedColor, size: brushSize, page: currentPage });
 
-    // Save the drawing command
-    setPages((prevPages) => {
-      const newPages = [...prevPages];
-      newPages[currentPage] = [...newPages[currentPage], { type: 'end', color: selectedColor, size: brushSize }];
-      return newPages;
+    // Emit drawing end
+    socket.emit('drawing', {
+      roomId,
+      type: 'end',
+      color: selectedColor,
+      size: brushSize,
+      page: currentPage
     });
   };
 
+  // Helper function to get coordinates for both mouse and touch events
+  const getCoordinates = (event) => {
+    let x, y;
+    if (event.touches) { // Touch event
+      const rect = event.target.getBoundingClientRect();
+      x = event.touches[0].clientX - rect.left;
+      y = event.touches[0].clientY - rect.top;
+    } else { // Mouse event
+      x = event.offsetX;
+      y = event.offsetY;
+    }
+    return { offsetX: x, offsetY: y };
+  };
+
   const nextPage = () => {
-    setCurrentPage((prevPage) => {
-      const newPage = prevPage + 1;
+    setCurrentPage(prev => {
+      const newPage = prev + 1;
       if (newPage >= pages.length) {
         setPages([...pages, []]);
       }
+      redrawPage(pages[newPage]);
       return newPage;
     });
   };
 
   const prevPage = () => {
-    setCurrentPage((prevPage) => Math.max(prevPage - 1, 0));
+    setCurrentPage(prev => {
+      const newPage = Math.max(prev - 1, 0);
+      redrawPage(pages[newPage]);
+      return newPage;
+    });
   };
 
-  return { canvasRef, startDrawing, draw, endDrawing, nextPage, prevPage, currentPage, pages };
+  const redrawPage = (page) => {
+    if (!contextRef.current || !page) return;
+    contextRef.current.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    page.forEach(({ offsetX, offsetY, type, color, size }) => {
+      const ctx = contextRef.current;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = size;
+      switch (type) {
+        case 'start':
+          ctx.beginPath();
+          ctx.moveTo(offsetX, offsetY);
+          break;
+        case 'draw':
+          ctx.lineTo(offsetX, offsetY);
+          ctx.stroke();
+          break;
+        case 'end':
+          ctx.closePath();
+          break;
+      }
+    });
+  };
+
+  return {
+    canvasRef,
+    startDrawing,
+    draw,
+    endDrawing,
+    nextPage,
+    prevPage,
+    currentPage,
+    pages,
+    isHost,
+    drawingEnabled
+  };
 };
 
 export default useCanvas;

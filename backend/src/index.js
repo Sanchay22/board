@@ -15,18 +15,51 @@ const io = new Server(server, {
   }
 });
 
+const rooms = {};
+
 io.on('connection', (socket) => {
   console.log('A user connected');
 
   socket.on('join-room', (roomId) => {
     socket.join(roomId);
     console.log(`User joined room: ${roomId}`);
-    io.to(roomId).emit('user-joined', { message: 'A new user has joined the room' });
+    if (!rooms[roomId]) {
+      rooms[roomId] = { 
+        host: null, 
+        drawingEnabled: true,
+        pages: [[]], // Store drawing data for each page
+      };
+    }
+    if (!rooms[roomId].host) {
+      rooms[roomId].host = socket.id;
+      socket.emit('set-host');
+    }
+    // Send current room state to joining user
+    socket.emit('room-state', {
+      pages: rooms[roomId].pages,
+      drawingEnabled: rooms[roomId].drawingEnabled
+    });
   });
 
-  // Handle drawing events
+  socket.on('toggle-drawing', (roomId) => {
+    if (socket.id === rooms[roomId].host) {
+      rooms[roomId].drawingEnabled = !rooms[roomId].drawingEnabled;
+      io.to(roomId).emit('update-drawing-permission', rooms[roomId].drawingEnabled);
+    }
+  });
+
   socket.on('drawing', ({ roomId, offsetX, offsetY, type, color, size, page }) => {
-    socket.to(roomId).emit('drawing', { offsetX, offsetY, type, color, size, page });
+    // Allow drawing if user is host or drawing is enabled
+    if (socket.id === rooms[roomId]?.host || rooms[roomId]?.drawingEnabled) {
+      // Store drawing data
+      if (!rooms[roomId].pages[page]) {
+        rooms[roomId].pages[page] = [];
+      }
+      rooms[roomId].pages[page].push({ offsetX, offsetY, type, color, size });
+      
+      // Broadcast to other users
+      socket.to(roomId).emit('drawing', { offsetX, offsetY, type, color, size, page });
+    }
   });
 
   socket.on('disconnect', () => {

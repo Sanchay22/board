@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Square, Circle, Type } from 'react-feather';
+import { Square, Circle, Type ,PenTool} from 'react-feather';
 
 const Toolbar = ({ onToolChange, onColorChange, onBrushSizeChange }) => {
   const [selectedTool, setSelectedTool] = useState(null);
@@ -21,7 +21,9 @@ const Toolbar = ({ onToolChange, onColorChange, onBrushSizeChange }) => {
       name: 'text', 
       icon: <Type className="w-5 h-5" />,
       tooltip: 'Text'
-    }
+    },
+    { name: 'brush', 
+      icon: <PenTool className='w-5'/>, tooltip: 'Brush' }
   ];
 
   const handleToolSelect = (tool) => {
